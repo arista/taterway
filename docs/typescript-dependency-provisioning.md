@@ -1,37 +1,48 @@
 # TypeScript Dependency Provisioning
 
-Each program component, such as a function or a class, is explicitly passed any dependencies that it requires to do its job.  Components don't "reach out" to global entities or static methods, but instead rely solely on what's been passed in.  So when a component is designed, it not only defines what parameters it expects, but also defines a **Deps** object that declares its dependencies.  The component should then expect to be passed its required parameters and Deps object.
+Each program component, such as a function or a class, is explicitly passed any parameters and dependencies that it requires.  Components do not "reach out" to global entities or static methods, but instead rely solely on what's been passed in.
 
-For example (in TypeScript):
+## Component Design
+
+When a component is designed, it not only defines what parameters it expects, but also any dependencies it might need to do its work.  All of these values are collected into a **Context** object that must be assembled and passed to the component:
 
 ```
-function uploadDirectory(public props: UploadDirectoryProps, deps: UploadDirectoryDeps) {
-  deps.directorySource.readDir(props.dirname)
+function uploadDirectory(ctx: UploadDirectoryCtx): void {
+  ctx.directoryService.readDir(ctx.dirname)
   ...
-  deps.uploadTarget.writeFile(...)
+  ctx.uploadService.writeFile(...)
 }
 
-interface UploadDirectoryProps {
+type UploadDirectoryProps = {
   dirname: string
   dest: string
 }
 
-interface UploadDirectoryDeps {
-  directorySource: IDirectorySource
-  uploadTarget: IUploadTarget
+type IUploadDirectory = (props: UploadDirectoryProps): void
+
+type UploadDirectoryCtx = UploadDirectoryProps & {
+  directoryService: IDirectoryService
+  uploadService: IUploadService
 }
 ```
+In this case, the `uploadDirectory` function depends solely on the values passed in through the `UploadDirectoryCtx`.   This includes both values that one would normally think of as "parameters" (`dirname` and `dest`), as well as values that one might think of as "dependencies" (`directoryService` and `uploadService`).  All of those are combined into a single Context object that the function uses.
 
-Here the uploadDirectory function expects its dependencies to be passed as an UploadDirectoryDeps function.  Similarly for a class:
+In some cases, the distinction between "parameters" and "dependencies" is clear enough that a component might want to formalize it.  That's the case above, where the Context is actually a combination of `UploadDirectoryProps`, representing the parameters, and the additional values representing the dependencies.  The function also defines `IUploadDirectory` as a form of the function that just requires the parameters.  This is essentially the component anticipating how it will be used by consumers, who are just going to want to provide the props and not worry about the other dependencies.  Note, however, that the function itself doesn't care about the distinction - it requires the whole Context object regardless of how it's split up.
+
+
+
+
+
+The same principle can be applied to a class, in which a class is constructed with a "Context" that contains all of the dependencies that might be used by any method in the class:
 
 ```
 class Scheduler implements IScheduler {
-  constructor(public deps: SchedulerDeps) {
+  constructor(public ctx: SchedulerCtx) {
     this.jobs = []
   }
   
   pollNextJob() {
-    if (this.deps.timeService.currentTime >= this.nextJob.time) {
+    if (this.ctx.timeService.currentTime >= this.nextJob.time) {
       ...
     }
   }
@@ -39,27 +50,31 @@ class Scheduler implements IScheduler {
   ...
 }
 
-interface SchedulerDeps {
+type SchedulerCtx = {
   timeService: ITimeService
 }
 
 interface IScheduler {
-  addJob(...)
-  addPeriodicJob(...)
+  addJob(job: ...)
+  addPeriodicJob(period: ..., job: ...)
   ...
 }
 ```
 
-Here the class is constructed with a SchedulerDeps, which contains all of the dependencies that might be used by any method in the class.
+Here the class is constructed with a SchedulerCtx, which contains all of the dependencies that might be used by any method in the class.  This class doesn't have any parameters, so there isn't a need to define a separate **Props**  type.
 
-A "provisioning service" is then responsible for assembling the Deps objects required for each component.  This is typically the job of the top-level "App" class.  That class would create concrete instances of classes that satisfy the interfaces required by various components.  For example:
+## Provisioning Service
+
+A "provisioning service" takes on the responsibility of providing each component with the full Context object that component requires.  This is typically the job of a top-level "App" class, which ends up having knowledge of all components in the system.  For large systems, this can become unwieldy, and such systems may architect that "App" class to delegate some of that provisioning responsibility among various subsystems.
+
+In its simplest form, the App class can simply construct each component, filling in the required Context structures with pointers to other components:
 
 ```
 class App {
   timeService: TimeService
   scheduler: Scheduler
-  directorySource: DirectorySource
-  uploadTarget: UploadTarget
+  directoryService: DirectoryService
+  uploadService: UploadService
   
   constructor() {
     this.timeService = new TimeService(...)
@@ -115,8 +130,8 @@ class App {
   constructor() {
     ...
     this.uploadDirectory = (props) => uploadDirectory(props, {
-      directorySource: this.directorySource,
-      uploadTarget: this.uploadTarget,
+      directoryService: this.directoryService,
+      uploadService: this.uploadService,
     })
   }
 }
